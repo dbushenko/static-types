@@ -24,6 +24,27 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Find imports using (require ...) and (use ...) statements
 
+(defn- get-use-param [param code]
+  (let [current (first code)
+        tail (rest code)]
+    (if (not (empty? tail))
+      (if (= current param)
+        (first tail)
+        (get-use-param param tail)))))
+
+(defn- parse-use [code]
+  (let [path (first code)
+        tail (rest code)
+        only-funcs (set (get-use-param :only tail))
+        general-entry [path nil (if (nil? only-funcs) 
+                          #{}
+                          only-funcs)]
+        prefix (get-use-param :as tail)]
+    (println code)
+    (if (nil? prefix)
+      general-entry
+      [general-entry [path prefix #{}]])))
+
 (defn- import-node? [node]
   (and (list? node)
        (or (= 'use (first node))
@@ -31,17 +52,17 @@
 
 (defn- extract-prefix [node]
   (cond
-   (= 'use (first node)) ""
+   (= 'use (first node)) (parse-use (second (second node)))
    (= 'require (first node)) (if (and (coll? (second node))
                                       (= 3 (count (second node))))
-                               [(first (second node)) (nth (second node) 2)]
-                               [(second node) (second node)])))
+                               [[(first (second node)) (nth (second node) 2)]]
+                               [[(first (second node)) (first (second node))]])))
 
 (defn find-prefix-for-ns [code]
   (let [prefix (atom [])]
     (postwalk (fn [node]
                 (if (import-node? node)
-                  (swap! prefix conj (extract-prefix node)))
+                  (swap! prefix concat (extract-prefix node)))
                 node)
               code)
     @prefix))
@@ -57,11 +78,11 @@
 
 (defn- ns-extract-prefix [node]
   (cond
-   (= :use (first node)) ""
+   (= :use (first node)) (parse-use (second node))
    (= :require (first node)) (if (and (coll? (second node))
                                       (= 3 (count (second node))))
-                               [(first (second node)) (nth (second node) 2)]
-                               [(second node) (second node)])))
+                               [[(first (second node)) (nth (second node) 2)]]
+                               [[(first (second node)) (first (second node))]])))
 
 (defn find-prefix-for-ns-in-ns [code]
   (let [ns-def (first (filter #(and (list? %)
@@ -70,7 +91,7 @@
       (let [prefix (atom [])]
         (postwalk (fn [node]
                     (if (ns-import-node? node)
-                      (swap! prefix conj (ns-extract-prefix node)))
+                      (swap! prefix concat (ns-extract-prefix node)))
                     node)
                   ns-def)
         @prefix))))
@@ -78,21 +99,28 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Find functions of some namespace inside the provided code
 
-(defn get-functions-of-ns [namespace functions imports]
-  (let [p (second (first (filter #(= namespace (first %)) imports)))
-        prefix (if-not (nil? p) (str p "/") "")]
-    (doall (map
+(defn- apply-import [functions import]
+  (let [prefix (second import)
+        funcs (nth import 2)]
+    (into [] (doall (map
             (fn [fdef]
               (let [f (first fdef)
                     params (second fdef)]
-                [(symbol (str prefix f)) params]))
-            functions))))
+                [(symbol (str (if (nil? prefix) "" (str prefix "/")) f)) params]))
+            (filter #(or (empty? funcs) (contains? funcs (first %))) functions))))))
+
+(defn get-functions-of-ns [namespace functions imports]
+  (let [result-funcs (atom [])]
+    (doall (map #(swap! result-funcs concat (apply-import functions %)) imports))
+    @result-funcs))
 
 (defn get-ns-name [code]
   (second (first (filter #(and (list? %) (= 'ns (first %))) code))))
 
 (defn- find-func-def [name funcs]
-  (second (first (filter #(= name (first %)) funcs))))
+  (let [temp (filter #(= name (first %)) funcs)]
+    (println temp)
+    (second (first (filter #(= name (first %)) funcs)))))
 
 (defn- check-func-call [fdef fcall cur-func]
   (let [defcount (count fdef)
@@ -126,4 +154,10 @@
         imports (concat p1 p2)
         ns-name (get-ns-name ns1)
         prefixed-fs (get-functions-of-ns ns-name funcs imports)]
+    ; (println p1)
+    ; (println p2)
+    ; (println imports)
+    ; (println prefixed-fs)
     (check-functions ns2 prefixed-fs)))
+
+;; TODO: ignore functions in qoute

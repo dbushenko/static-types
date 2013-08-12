@@ -1,14 +1,16 @@
-(ns testns
-  (:require [myns :as m]))
+(ns testns)
+  ;(:use [myns :as n :only (func2)]))
+
+(use '(myns :as n :only (func2)))
 
 (defn my-func1 []
-  (m/func1 1 2))
+  (func1 1 2))
 
 (defn my-func2 []
-  (m/func2))
+  (func2))
 
 (defn my-func3 []
-  (m/func1))
+  (func1))
 
 (defn my-func4 [a b]
-  (m/func2 1 2 3))
+  (func2 1 2 3))
