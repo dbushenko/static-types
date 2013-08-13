@@ -40,7 +40,6 @@
                           #{}
                           only-funcs)]
         prefix (get-use-param :as tail)]
-    (println code)
     (if (nil? prefix)
       general-entry
       [general-entry [path prefix #{}]])))
@@ -118,9 +117,7 @@
   (second (first (filter #(and (list? %) (= 'ns (first %))) code))))
 
 (defn- find-func-def [name funcs]
-  (let [temp (filter #(= name (first %)) funcs)]
-    (println temp)
-    (second (first (filter #(= name (first %)) funcs)))))
+    (second (first (filter #(= name (first %)) funcs))))
 
 (defn- check-func-call [fdef fcall cur-func]
   (let [defcount (count fdef)
@@ -130,16 +127,28 @@
         (println "Error in" cur-func "calling" (first fcall))
         (println "You should provide" defcount "parameters!\n")))))
 
+(def black-list #{'ns 'use 'require})
+
+(defn check-functions* [node functions cur-func]
+  (if (coll? node)
+    (let [fdef (find-func-def (first node) functions)]
+      (cond 
+       (and 
+        (= 'defn (first node))
+        (not= @cur-func :ignore))
+         (reset! cur-func (second node))
+       (contains? black-list (first node)) (do (reset! cur-func :ignore))
+       (and 
+        (not (nil? fdef))
+        (not= @cur-func :ignore))
+         (check-func-call fdef node @cur-func))
+      (doall (map #(check-functions* % functions cur-func) node))
+      (if (contains? black-list (first node))
+          (reset! cur-func nil)))))
+
 (defn check-functions [code functions]
   (let [cur-func (atom nil)]
-    (prewalk (fn [node]
-                (if (list? node)
-                  (let [fdef (find-func-def (first node) functions)]
-                    (cond
-                     (= 'defn (first node)) (reset! cur-func (second node))
-                     (not (nil? fdef)) (check-func-call fdef node @cur-func))))
-                node)
-              code))
+    (check-functions* code functions cur-func))
   nil)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -159,5 +168,3 @@
     ; (println imports)
     ; (println prefixed-fs)
     (check-functions ns2 prefixed-fs)))
-
-;; TODO: ignore functions in qoute

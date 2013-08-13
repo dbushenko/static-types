@@ -1,7 +1,7 @@
-(ns testns)
-  ;(:use [myns :as n :only (func2)]))
+(ns testns
+  (:use [myns :as n :only (func2)]))
 
-(use '(myns :as n :only (func2)))
+;(use '(myns :as n :only (func2)))
 
 (defn my-func1 []
   (func1 1 2))
@@ -14,3 +14,6 @@
 
 (defn my-func4 [a b]
   (func2 1 2 3))
+
+(defn my-func5 []
+  (n/func1))
