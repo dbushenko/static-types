@@ -24,25 +24,96 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Find imports using (require ...) and (use ...) statements
 
-(defn- get-use-param [param code]
+; (defn- remove-params 
+;   ([code] (remove-params code false))
+;   ([code ignore]
+;   (if (empty? code)
+;     []
+;     (let [current (first code)
+;           tail (rest code)]
+;       (if ignore
+;         (remove-params tail false)
+;         (if (keyword? current) 
+;           (remove-params tail true)
+;           (cons current (remove-params tail false))))))))
+
+(defn- get-param [param code]
   (let [current (first code)
         tail (rest code)]
     (if (not (empty? tail))
       (if (= current param)
         (first tail)
-        (get-use-param param tail)))))
+        (get-param param tail)))))
+
+(defn- simple-use? [code]
+  (if (empty? code)
+    false
+    (or (keyword? (first code))
+        (simple-use? (rest code)))))
+
+(defn- unquote [code]
+  (if (coll? code)
+    (if (= (first code) 'quote)
+      (second code)
+      code)
+    code))
+
+(defn- parse-use-simple 
+  ([node]
+    (let [path (first node)
+          tail (rest node)
+          only-funcs (set (get-param :only tail))
+          general-entry [path nil (if (nil? only-funcs) 
+                            #{}
+                            only-funcs)]
+          prefix (get-param :as tail)]
+      (if (nil? prefix)
+        [general-entry]
+        [general-entry [path prefix #{}]])))
+  ([path node]
+    (let [name (symbol (str path "." (first node)))
+          only-funcs (set (get-param :only node))
+          general-entry [name nil (if (nil? only-funcs) 
+                            #{}
+                            only-funcs)]
+          prefix (get-param :as node)]
+      (if (nil? prefix)
+        [general-entry]
+        [general-entry [name prefix #{}]]))))
+
+(defn- parse-use-2 
+  ([node]
+    (let [current (first node)
+          tail (rest node)]
+      (if (empty? tail)
+        [[current nil #{}]]
+        (parse-use-2 current tail))))
+  ([path node]
+    (let [current (first node)
+          tail (rest node)]
+      (concat 
+        (if (empty? tail)
+          []
+          (parse-use-2 path tail))
+        (if (coll? current)
+          (parse-use-simple path current)
+          [[(symbol (str path "." (first node))) nil #{}]])))))
+
+(defn- parse-use-1 [node]
+  (let [node1 (unquote node)]
+    (if (coll? node1)
+      (if (simple-use? node1)
+        (parse-use-simple node1)
+        (parse-use-2 node1))
+      [[node1 nil #{}]])))
 
 (defn- parse-use [code]
-  (let [path (first code)
-        tail (rest code)
-        only-funcs (set (get-use-param :only tail))
-        general-entry [path nil (if (nil? only-funcs) 
-                          #{}
-                          only-funcs)]
-        prefix (get-use-param :as tail)]
-    (if (nil? prefix)
-      general-entry
-      [general-entry [path prefix #{}]])))
+  (if (simple-use? code)
+    (parse-use-simple code)
+    (apply concat (map parse-use-1 code))))
+
+(defn- parse-require [code]
+  )
 
 (defn- import-node? [node]
   (and (list? node)
@@ -51,11 +122,11 @@
 
 (defn- extract-prefix [node]
   (cond
-   (= 'use (first node)) (parse-use (second (second node)))
+   (= 'use (first node)) (parse-use (rest node))
    (= 'require (first node)) (if (and (coll? (second node))
                                       (= 3 (count (second node))))
-                               [[(first (second node)) (nth (second node) 2)]]
-                               [[(first (second node)) (first (second node))]])))
+                               [[(first (second node)) (nth (second node) 2) #{}]]
+                               [[(first (second node)) (first (second node)) #{}]])))
 
 (defn find-prefix-for-ns [code]
   (let [prefix (atom [])]
@@ -77,11 +148,11 @@
 
 (defn- ns-extract-prefix [node]
   (cond
-   (= :use (first node)) (parse-use (second node))
+   (= :use (first node)) (parse-use (rest node))
    (= :require (first node)) (if (and (coll? (second node))
                                       (= 3 (count (second node))))
-                               [[(first (second node)) (nth (second node) 2)]]
-                               [[(first (second node)) (first (second node))]])))
+                               [[(first (second node)) (nth (second node) 2) #{}]]
+                               [[(first (second node)) (first (second node)) #{}]])))
 
 (defn find-prefix-for-ns-in-ns [code]
   (let [ns-def (first (filter #(and (list? %)
@@ -129,7 +200,7 @@
 
 (def black-list #{'ns 'use 'require})
 
-(defn check-functions* [node functions cur-func]
+(defn- check-functions* [node functions cur-func]
   (if (coll? node)
     (let [fdef (find-func-def (first node) functions)]
       (cond 
@@ -163,8 +234,21 @@
         imports (concat p1 p2)
         ns-name (get-ns-name ns1)
         prefixed-fs (get-functions-of-ns ns-name funcs imports)]
-    ; (println p1)
-    ; (println p2)
-    ; (println imports)
-    ; (println prefixed-fs)
     (check-functions ns2 prefixed-fs)))
+
+
+; Examples
+
+; (use '[myns :as m :only (func2)])
+; (use 'myns 'clojure.string)
+; (use 'myns '[clojure.string])
+; (use '[clojure string] 'myns)
+; (use '[clojure [string :as str :only (replace)] pprint] 'myns)
+
+
+;; TODO
+;; :use 
+;;      :exclude
+;;      :rename
+;; :require
+;;      (require '(clojure zip [set :as s]))
