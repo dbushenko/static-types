@@ -45,20 +45,20 @@
         (first tail)
         (get-param param tail)))))
 
-(defn- simple-use? [code]
+(comment defn- simple-use? [code]
   (if (empty? code)
     false
     (or (keyword? (first code))
         (simple-use? (rest code)))))
 
-(defn- unquote [code]
+(defn- unquote* [code]
   (if (coll? code)
     (if (= (first code) 'quote)
       (second code)
       code)
     code))
 
-(defn- parse-use-simple 
+(comment defn- parse-use-simple 
   ([node]
     (let [path (first node)
           tail (rest node)
@@ -81,7 +81,33 @@
         [general-entry]
         [general-entry [name prefix #{}]]))))
 
-(defn- parse-use-2 
+(comment defn- parse-require-simple 
+  ([node]
+    (let [path (first node)
+          tail (rest node)
+          only-funcs (set (get-param :only tail))
+          general-entry [path nil (if (nil? only-funcs) 
+                            #{}
+                            only-funcs)]
+          prefix (get-param :as tail)]
+      [path (if (nil? prefix)
+              path
+              prefix)
+            (if (nil? only-funcs) 
+              #{}
+              only-funcs)]
+  ([path node]
+    (let [name (symbol (str path "." (first node)))
+          only-funcs (set (get-param :only node))
+          general-entry [name nil (if (nil? only-funcs) 
+                            #{}
+                            only-funcs)]
+          prefix (get-param :as node)]
+      (if (nil? prefix)
+        [general-entry]
+        [general-entry [name prefix #{}]]))))
+
+(comment defn- parse-use-2 
   ([node]
     (let [current (first node)
           tail (rest node)]
@@ -99,18 +125,61 @@
           (parse-use-simple path current)
           [[(symbol (str path "." (first node))) nil #{}]])))))
 
-(defn- parse-use-1 [node]
-  (let [node1 (unquote node)]
+(comment defn- parse-use-1 [node]
+  (let [node1 (unquote* node)]
     (if (coll? node1)
       (if (simple-use? node1)
         (parse-use-simple node1)
         (parse-use-2 node1))
       [[node1 nil #{}]])))
 
-(defn- parse-use [code]
+(comment defn- parse-use [code]
   (if (simple-use? code)
     (parse-use-simple code)
     (apply concat (map parse-use-1 code))))
+
+(defrecord NsNode [full-ns-name ns-prefix functions])
+
+(defn- make-ns-symbol-with-prefix [prefix ns-name]
+  (symbol (str prefix "." ns-name)))
+
+(defn- simple-ns-use? [node]
+  (symbol? node)) 
+
+(defn- ns-with-children-use? [node]
+  (if (coll? node)
+    (empty? (filter keyword? node))))
+
+(defn- ns-with-options-use? [node]
+  (if (coll? node)
+    (not (empty? (filter keyword? node)))))
+
+(defn- parse-simple-ns-use [node]
+  (NsNode. node nil #{}))
+
+(defn- parse-ns-with-children-use [node]
+  (let [prefix (first node)
+        child (rest node)]
+    (if (empty? child) 
+      (NsNode. prefix nil #{})
+      (map #(if (simple-ns-use? %)
+              (NsNode. (make-ns-symbol-with-prefix prefix %)
+                        nil
+                        #{})
+              ;; () 
+            child)
+    ))))
+
+(defn- parse-ns-with-options-use [node]
+  )
+
+(defn- parse-use [code]
+  (let [node (unquote* code)]
+    (cond 
+      (simple-ns-use? node) (parse-simple-ns-use node)                ;; (use 'myns.abc)
+      (ns-with-children-use? node) (parse-ns-with-children-use node)  ;; (use '[myns.abc a1 a2])
+      (ns-with-options-use? node) (parse-ns-with-options-use node)    ;; (use '[myns.abc.a1 :as a1])
+      :default nil)))
 
 (defn- parse-require [code]
   )
@@ -122,7 +191,7 @@
 
 (defn- extract-prefix [node]
   (cond
-   (= 'use (first node)) (parse-use (rest node))
+   (= 'use (first node)) (apply concat (map parse-use (rest code)))
    (= 'require (first node)) (if (and (coll? (second node))
                                       (= 3 (count (second node))))
                                [[(first (second node)) (nth (second node) 2) #{}]]
@@ -181,7 +250,7 @@
 
 (defn get-functions-of-ns [namespace functions imports]
   (let [result-funcs (atom [])]
-    (doall (map #(swap! result-funcs concat (apply-import functions %)) imports))
+    (doall (map #(swap! result-funcs concat (apply-import functions %)) (filter #(= namespace (first %)) imports)))
     @result-funcs))
 
 (defn get-ns-name [code]
@@ -234,6 +303,11 @@
         imports (concat p1 p2)
         ns-name (get-ns-name ns1)
         prefixed-fs (get-functions-of-ns ns-name funcs imports)]
+    (println funcs)
+    (println p1)
+    (println p2)
+    (println imports)
+    (println prefixed-fs)
     (check-functions ns2 prefixed-fs)))
 
 
